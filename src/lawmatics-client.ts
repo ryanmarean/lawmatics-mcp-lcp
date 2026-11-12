@@ -9,9 +9,10 @@
  * - Pagination is `?page=N` with a fixed page size of 25. No per_page param exists.
  * - Access tokens never expire and there is no refresh token, so a 401 always means
  *   the token itself is wrong/revoked — never retry it.
- * - Documented rate limit conflicts between 50/min (API docs) and 150/min (help
- *   center). Default to the conservative 50/min; override with
- *   LAWMATICS_RATE_LIMIT_PER_MIN if your firm has the higher limit.
+ * - Rate limit: 500 requests/min per firm (API changelog 1.21.15, 05/26/2026),
+ *   shared by every integration the firm runs; 429s carry Retry-After: 60.
+ *   Default to 500/min; lower LAWMATICS_RATE_LIMIT_PER_MIN to leave headroom
+ *   for other integrations.
  */
 
 import { getUserContext, isHostedMode } from "./session-context.js";
@@ -88,16 +89,19 @@ export function parseErrorMessage(body: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Rate limiting — sliding one-minute window, conservative 50 req/min default.
+// Rate limiting — sliding one-minute window, 500 req/min default (the documented per-firm limit).
+// One window per process, so all users of a hosted server share the firm's budget.
 // ---------------------------------------------------------------------------
 
 const WINDOW_MS = 60_000;
 let requestTimestamps: number[] = [];
 
-function getRateLimit(): number {
+export const DEFAULT_RATE_LIMIT_PER_MIN = 500;
+
+export function getRateLimit(): number {
   const raw = process.env.LAWMATICS_RATE_LIMIT_PER_MIN;
   const n = raw ? parseInt(raw, 10) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : 50;
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_RATE_LIMIT_PER_MIN;
 }
 
 export async function enforceRateLimit(): Promise<void> {

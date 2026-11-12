@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   __resetRateLimiter,
   enforceRateLimit,
+  getRateLimit,
   flattenResource,
   LawmaticsApiError,
   lawmaticsGetAll,
@@ -258,6 +259,20 @@ describe("retry behavior", () => {
 });
 
 describe("rate limiter", () => {
+  it("defaults to the documented 500 req/min per-firm limit and honors overrides", () => {
+    const saved = process.env.LAWMATICS_RATE_LIMIT_PER_MIN;
+    try {
+      delete process.env.LAWMATICS_RATE_LIMIT_PER_MIN;
+      expect(getRateLimit()).toBe(500);
+      process.env.LAWMATICS_RATE_LIMIT_PER_MIN = "nonsense";
+      expect(getRateLimit()).toBe(500);
+      process.env.LAWMATICS_RATE_LIMIT_PER_MIN = "120";
+      expect(getRateLimit()).toBe(120);
+    } finally {
+      process.env.LAWMATICS_RATE_LIMIT_PER_MIN = saved;
+    }
+  });
+
   it("delays the request that exceeds the per-minute budget", async () => {
     vi.useFakeTimers();
     process.env.LAWMATICS_RATE_LIMIT_PER_MIN = "2";

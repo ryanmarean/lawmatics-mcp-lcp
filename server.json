@@ -40,7 +40,7 @@
         },
         {
           "name": "LAWMATICS_RATE_LIMIT_PER_MIN",
-          "description": "Client-side request throttle per minute (default: 50, the conservative documented per-firm limit; newer docs say 150).",
+          "description": "Client-side request throttle per minute (default: 500, the documented per-firm limit shared by all of the firm's integrations).",
           "isRequired": false,
           "format": "string",
           "isSecret": false

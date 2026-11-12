@@ -147,7 +147,7 @@ Set `LAWMATICS_READ_ONLY=1` in the server's env config and every write tool (cre
 | `LAWMATICS_ACCESS_TOKEN` | **Required.** Your OAuth access token (never expires). |
 | `LAWMATICS_READ_ONLY` | `1` = disable all write tools. |
 | `LAWMATICS_EXPERIMENTAL_TOOLS` | `1` = enable tools whose API shape Lawmatics hasn't fully documented. |
-| `LAWMATICS_RATE_LIMIT_PER_MIN` | Client-side throttle. Default 50 (Lawmatics documents both 50/min and 150/min; we default to the safe one). |
+| `LAWMATICS_RATE_LIMIT_PER_MIN` | Client-side throttle. Default 500, the documented per-firm limit (API v1.21.15). The limit is shared by every integration the firm runs and, in hosted mode, by all users; lower it to leave headroom. |
 | `LAWMATICS_AUDIT_LOG` | `0` = disable the local audit log. |
 | `LAWMATICS_AUDIT_LOG_PATH` | Audit log location (default `~/.lawmatics-mcp/audit.log`). |
 | `LAWMATICS_CLIENT_ID` / `LAWMATICS_CLIENT_SECRET` | Only for the one-time `auth` command. |
