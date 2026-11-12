@@ -123,6 +123,7 @@ How sign-in works: when a user clicks **Connect** in Claude, this server sends t
 | **Tasks** | `list-tasks`, `create-task`, `update-task` |
 | **Events** | `list-events`, `create-event` |
 | **Notes & timeline** | `list-notes`, `create-note`, `list-activities` |
+| **Documents** | `list-matter-folders`, `upload-file` — attach a file to a matter from a local path (local installs only) or base64 content. The assistant must ask which folder to use (an existing one, or none); new folders are created only with an explicit `create_folder: true` |
 | **Tags** | `list-tags`, `attach-tags`, `detach-tags` |
 | **Custom fields** | `list-custom-fields` (+ experimental `set-matter-custom-fields`, see below) |
 | **Intake forms** | `list-forms`, `get-form`, `get-form-entries`, `submit-form` |

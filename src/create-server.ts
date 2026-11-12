@@ -12,6 +12,7 @@ import { registerTagTools } from "./tools/tags.js";
 import { registerCustomFieldTools } from "./tools/custom-fields.js";
 import { registerFormTools } from "./tools/forms.js";
 import { registerBillingTools } from "./tools/billing.js";
+import { registerFileTools } from "./tools/files.js";
 import { registerAuthStatusResource } from "./resources/auth-status.js";
 
 const _require = createRequire(import.meta.url);
@@ -32,6 +33,7 @@ export function createMcpServer(): McpServer {
   registerCustomFieldTools(server);
   registerFormTools(server);
   registerBillingTools(server);
+  registerFileTools(server);
   registerAuthStatusResource(server);
 
   return server;

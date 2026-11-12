@@ -240,12 +240,15 @@ async function request(
     Authorization: `Bearer ${token}`,
     Accept: "application/json",
   };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+  // Multipart bodies go through as-is: fetch sets the boundary in Content-Type
+  // itself, and a FormData can be re-sent unchanged on a 429 retry.
+  const isForm = body instanceof FormData;
+  if (body !== undefined && !isForm) headers["Content-Type"] = "application/json";
 
   const res = await fetch(url.toString(), {
     method,
     headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
   });
 
   if (res.status === 429) {
@@ -396,6 +399,15 @@ export async function lawmaticsGetAll(path: string, params?: QueryParams, startP
 /** POST that returns a resource envelope (create endpoints). */
 export async function lawmaticsPost(path: string, body: unknown, params?: QueryParams): Promise<FlatRecord> {
   const envelope = expectEnvelope(await request("POST", path, params, body), path);
+  if (typeof envelope.data !== "object" || envelope.data === null || Array.isArray(envelope.data)) {
+    throw new LawmaticsApiError(200, `Expected a single resource from POST ${path}.`);
+  }
+  return flattenResource(envelope.data as JsonApiResource);
+}
+
+/** POST a multipart/form-data body (file uploads) that returns a resource envelope. */
+export async function lawmaticsPostMultipart(path: string, form: FormData): Promise<FlatRecord> {
+  const envelope = expectEnvelope(await request("POST", path, undefined, form), path);
   if (typeof envelope.data !== "object" || envelope.data === null || Array.isArray(envelope.data)) {
     throw new LawmaticsApiError(200, `Expected a single resource from POST ${path}.`);
   }
