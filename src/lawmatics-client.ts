@@ -14,6 +14,8 @@
  *   LAWMATICS_RATE_LIMIT_PER_MIN if your firm has the higher limit.
  */
 
+import { getUserContext, isHostedMode } from "./session-context.js";
+
 export class LawmaticsApiError extends Error {
   constructor(
     public readonly status: number,
@@ -28,7 +30,21 @@ export function getApiBase(): string {
   return (process.env.LAWMATICS_API_BASE ?? "https://api.lawmatics.com/v1").replace(/\/+$/, "");
 }
 
-function getAccessToken(): string {
+/**
+ * Hosted mode: the signed-in user's own token, and nothing else. A missing
+ * context there means a code path escaped the per-user wrapper; falling back
+ * to a server-wide token would let one user act under another identity, so
+ * it fails closed instead. stdio mode: the single LAWMATICS_ACCESS_TOKEN.
+ */
+async function getAccessToken(): Promise<string> {
+  const ctx = getUserContext();
+  if (ctx) return (await ctx.getAccessToken()).trim();
+  if (isHostedMode()) {
+    throw new LawmaticsApiError(
+      401,
+      "Not signed in to Lawmatics. Reconnect the Lawmatics connector to sign in again."
+    );
+  }
   const token = process.env.LAWMATICS_ACCESS_TOKEN;
   if (!token) {
     throw new LawmaticsApiError(
@@ -208,7 +224,7 @@ async function request(
 ): Promise<unknown> {
   await enforceRateLimit();
 
-  const token = getAccessToken();
+  const token = await getAccessToken();
   const url = new URL(`${getApiBase()}${path}`);
   if (params) {
     for (const [k, v] of Object.entries(params)) {
@@ -250,9 +266,12 @@ async function request(
     // Lawmatics tokens never expire, so a 401 is always a bad/revoked token — not retryable.
     throw new LawmaticsApiError(
       401,
-      "Lawmatics rejected the access token (401). Tokens never expire, so the token is either wrong, " +
-        "revoked, or from a deleted developer app. Re-run `npx @oktopeak/lawmatics-mcp auth` and update " +
-        "LAWMATICS_ACCESS_TOKEN."
+      getUserContext()
+        ? "Lawmatics rejected your access token (401). It was revoked or the developer app changed. " +
+            "Disconnect and reconnect the Lawmatics connector to sign in again."
+        : "Lawmatics rejected the access token (401). Tokens never expire, so the token is either wrong, " +
+            "revoked, or from a deleted developer app. Re-run `npx @oktopeak/lawmatics-mcp auth` and update " +
+            "LAWMATICS_ACCESS_TOKEN."
     );
   }
 

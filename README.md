@@ -83,6 +83,31 @@ Restart Claude Desktop. Ask *"Who am I logged in as in Lawmatics?"* to verify th
 claude mcp add lawmatics -e LAWMATICS_ACCESS_TOKEN=your_token_here -- npx -y @oktopeak/lawmatics-mcp
 ```
 
+### Hosted, multi-user (Claude Enterprise / Team org connector)
+
+`TRANSPORT=http` runs the connector as a web server that many people use at once, each signed in as **their own Lawmatics user**. There is no shared token: every API call runs with the token of the person using it, so "created by" and timeline activity in Lawmatics show the real user, and each person sees only the records their Lawmatics role allows.
+
+How sign-in works: when a user clicks **Connect** in Claude, this server sends them to Lawmatics' own approval screen. Lawmatics returns them to this server, which exchanges the code for that user's token, identifies them through `/users/me`, and stores the token encrypted. Claude only ever receives short-lived tokens issued by this server (1 hour, with rotating refresh tokens). Per the Lawmatics docs, an admin creates the developer app once; any user can then approve it for their own account.
+
+**Setup**
+
+1. In Lawmatics (admin): Settings > Developers > Create New Application. Set the Callback URL to `https://<your-host>/oauth/lawmatics/callback`.
+2. On the host, set the environment (see the hosted rows in the configuration reference below):
+   ```bash
+   TRANSPORT=http
+   MCP_BASE_URL=https://<your-host>
+   LAWMATICS_CLIENT_ID=...
+   LAWMATICS_CLIENT_SECRET=...
+   LAWMATICS_MCP_ENCRYPTION_KEY=$(openssl rand -hex 32)   # keep a copy outside the server
+   LAWMATICS_ALLOWED_EMAIL_DOMAINS=yourfirm.com
+   ```
+3. Run `node build/index.js` under systemd or pm2. It listens on `127.0.0.1:3100`; put nginx or Caddy in front for TLS and proxy `https://<your-host>/` to it (the OAuth endpoints live at the root, not only under `/mcp`).
+4. In Claude (org owner): add a custom connector with the URL `https://<your-host>/mcp`. Each user then connects it and signs in to Lawmatics once.
+
+**Offboarding.** With the server stopped, run `node build/index.js users list` and `node build/index.js users remove <lawmatics-user-id>`. That deletes the stored token and ends the user's Claude access immediately. Lawmatics tokens never expire and Lawmatics has no revocation API, so also ask support@lawmatics.com to revoke the user's tokens for your app, and deactivate the user in Lawmatics.
+
+**Limits.** One process per data directory (state is in memory and written to `store.enc`). Each reconnect mints a new Lawmatics token for that user; older ones stay valid at Lawmatics until support revokes them.
+
 ---
 
 ## Available tools
@@ -128,6 +153,17 @@ Set `LAWMATICS_READ_ONLY=1` in the server's env config and every write tool (cre
 | `LAWMATICS_CLIENT_ID` / `LAWMATICS_CLIENT_SECRET` | Only for the one-time `auth` command. |
 | `LAWMATICS_REDIRECT_PORT` | OAuth callback port (default 5678). |
 | `LAWMATICS_API_BASE` | API base override (default `https://api.lawmatics.com/v1`). |
+| `TRANSPORT` | `stdio` (default, single user) or `http` (hosted, multi-user). |
+| `MCP_BASE_URL` | Hosted: **required.** Public `https://` address of the server. |
+| `LAWMATICS_CLIENT_ID` / `LAWMATICS_CLIENT_SECRET` | Hosted: **required.** The developer app users sign in to. |
+| `LAWMATICS_MCP_ENCRYPTION_KEY` | Hosted: **required.** 64 hex chars; encrypts the token store. Losing it disconnects everyone. |
+| `LAWMATICS_MCP_DATA_DIR` | Hosted: where `store.enc` lives (default `~/.lawmatics-mcp`). |
+| `LAWMATICS_ALLOWED_EMAIL_DOMAINS` | Hosted: comma-separated; only Lawmatics users with these email domains may sign in. Strongly recommended. |
+| `MCP_ALLOWED_REDIRECT_URIS` | Hosted: OAuth callbacks MCP clients may register (default: Claude's `https://claude.ai/api/mcp/auth_callback` and `https://claude.com/api/mcp/auth_callback`). |
+| `HOST` / `PORT` | Hosted: listen address (default `127.0.0.1:3100`). |
+| `ACCESS_TOKEN_TTL_SECONDS` / `REFRESH_TOKEN_TTL_DAYS` | Hosted: lifetime of tokens issued to Claude (default 3600 s / 90 days). |
+| `SESSION_IDLE_TIMEOUT_HOURS` | Hosted: idle MCP sessions are closed after this (default 24). |
+| `TRUST_PROXY` | Hosted: Express `trust proxy` (default `loopback`, for a proxy on the same host). |
 
 ## Security
 
