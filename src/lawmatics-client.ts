@@ -9,10 +9,13 @@
  * - Pagination is `?page=N` with a fixed page size of 25. No per_page param exists.
  * - Access tokens never expire and there is no refresh token, so a 401 always means
  *   the token itself is wrong/revoked — never retry it.
- * - Documented rate limit conflicts between 50/min (API docs) and 150/min (help
- *   center). Default to the conservative 50/min; override with
- *   LAWMATICS_RATE_LIMIT_PER_MIN if your firm has the higher limit.
+ * - Rate limit: 500 requests/min per firm (API changelog 1.21.15, 05/26/2026),
+ *   shared by every integration the firm runs; 429s carry Retry-After: 60.
+ *   Default to 500/min; lower LAWMATICS_RATE_LIMIT_PER_MIN to leave headroom
+ *   for other integrations.
  */
+
+import { getUserContext, isHostedMode } from "./session-context.js";
 
 export class LawmaticsApiError extends Error {
   constructor(
@@ -28,7 +31,21 @@ export function getApiBase(): string {
   return (process.env.LAWMATICS_API_BASE ?? "https://api.lawmatics.com/v1").replace(/\/+$/, "");
 }
 
-function getAccessToken(): string {
+/**
+ * Hosted mode: the signed-in user's own token, and nothing else. A missing
+ * context there means a code path escaped the per-user wrapper; falling back
+ * to a server-wide token would let one user act under another identity, so
+ * it fails closed instead. stdio mode: the single LAWMATICS_ACCESS_TOKEN.
+ */
+async function getAccessToken(): Promise<string> {
+  const ctx = getUserContext();
+  if (ctx) return (await ctx.getAccessToken()).trim();
+  if (isHostedMode()) {
+    throw new LawmaticsApiError(
+      401,
+      "Not signed in to Lawmatics. Reconnect the Lawmatics connector to sign in again."
+    );
+  }
   const token = process.env.LAWMATICS_ACCESS_TOKEN;
   if (!token) {
     throw new LawmaticsApiError(
@@ -72,16 +89,19 @@ export function parseErrorMessage(body: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Rate limiting — sliding one-minute window, conservative 50 req/min default.
+// Rate limiting — sliding one-minute window, 500 req/min default (the documented per-firm limit).
+// One window per process, so all users of a hosted server share the firm's budget.
 // ---------------------------------------------------------------------------
 
 const WINDOW_MS = 60_000;
 let requestTimestamps: number[] = [];
 
-function getRateLimit(): number {
+export const DEFAULT_RATE_LIMIT_PER_MIN = 500;
+
+export function getRateLimit(): number {
   const raw = process.env.LAWMATICS_RATE_LIMIT_PER_MIN;
   const n = raw ? parseInt(raw, 10) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : 50;
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_RATE_LIMIT_PER_MIN;
 }
 
 export async function enforceRateLimit(): Promise<void> {
@@ -208,7 +228,7 @@ async function request(
 ): Promise<unknown> {
   await enforceRateLimit();
 
-  const token = getAccessToken();
+  const token = await getAccessToken();
   const url = new URL(`${getApiBase()}${path}`);
   if (params) {
     for (const [k, v] of Object.entries(params)) {
@@ -220,12 +240,15 @@ async function request(
     Authorization: `Bearer ${token}`,
     Accept: "application/json",
   };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+  // Multipart bodies go through as-is: fetch sets the boundary in Content-Type
+  // itself, and a FormData can be re-sent unchanged on a 429 retry.
+  const isForm = body instanceof FormData;
+  if (body !== undefined && !isForm) headers["Content-Type"] = "application/json";
 
   const res = await fetch(url.toString(), {
     method,
     headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
   });
 
   if (res.status === 429) {
@@ -250,9 +273,12 @@ async function request(
     // Lawmatics tokens never expire, so a 401 is always a bad/revoked token — not retryable.
     throw new LawmaticsApiError(
       401,
-      "Lawmatics rejected the access token (401). Tokens never expire, so the token is either wrong, " +
-        "revoked, or from a deleted developer app. Re-run `npx @oktopeak/lawmatics-mcp auth` and update " +
-        "LAWMATICS_ACCESS_TOKEN."
+      getUserContext()
+        ? "Lawmatics rejected your access token (401). It was revoked or the developer app changed. " +
+            "Disconnect and reconnect the Lawmatics connector to sign in again."
+        : "Lawmatics rejected the access token (401). Tokens never expire, so the token is either wrong, " +
+            "revoked, or from a deleted developer app. Re-run `npx @oktopeak/lawmatics-mcp auth` and update " +
+            "LAWMATICS_ACCESS_TOKEN."
     );
   }
 
@@ -373,6 +399,15 @@ export async function lawmaticsGetAll(path: string, params?: QueryParams, startP
 /** POST that returns a resource envelope (create endpoints). */
 export async function lawmaticsPost(path: string, body: unknown, params?: QueryParams): Promise<FlatRecord> {
   const envelope = expectEnvelope(await request("POST", path, params, body), path);
+  if (typeof envelope.data !== "object" || envelope.data === null || Array.isArray(envelope.data)) {
+    throw new LawmaticsApiError(200, `Expected a single resource from POST ${path}.`);
+  }
+  return flattenResource(envelope.data as JsonApiResource);
+}
+
+/** POST a multipart/form-data body (file uploads) that returns a resource envelope. */
+export async function lawmaticsPostMultipart(path: string, form: FormData): Promise<FlatRecord> {
+  const envelope = expectEnvelope(await request("POST", path, undefined, form), path);
   if (typeof envelope.data !== "object" || envelope.data === null || Array.isArray(envelope.data)) {
     throw new LawmaticsApiError(200, `Expected a single resource from POST ${path}.`);
   }

@@ -1,6 +1,7 @@
 import { appendFile, mkdir } from "fs/promises";
 import { homedir } from "os";
 import path from "path";
+import { getUserContext } from "../session-context.js";
 
 export type AuditEntry = {
   tool: string;
@@ -8,6 +9,10 @@ export type AuditEntry = {
   args?: Record<string, unknown>;
   result_count?: number;
   error?: string;
+  /** Lawmatics user who acted. Filled from the request context in hosted mode. */
+  user_id?: string;
+  user_email?: string;
+  session_id?: string;
 };
 
 function auditEnabled(): boolean {
@@ -21,6 +26,17 @@ function auditPath(): string {
 
 let warned = false;
 
+/** Identity fields for the current request (hosted mode); empty in stdio mode. */
+function identityFields(): Pick<AuditEntry, "user_id" | "user_email" | "session_id"> {
+  const ctx = getUserContext();
+  if (!ctx) return {};
+  return {
+    user_id: ctx.userId,
+    ...(ctx.email ? { user_email: ctx.email } : {}),
+    ...(ctx.sessionId ? { session_id: ctx.sessionId } : {}),
+  };
+}
+
 /**
  * Append-only JSONL audit trail of every tool call, written locally.
  * Never throws — an unwritable audit log must not break tool calls, but the
@@ -31,7 +47,8 @@ export async function auditLog(entry: AuditEntry): Promise<void> {
   try {
     const file = auditPath();
     await mkdir(path.dirname(file), { recursive: true });
-    await appendFile(file, JSON.stringify({ ts: new Date().toISOString(), ...entry }) + "\n", "utf8");
+    const line = { ts: new Date().toISOString(), ...identityFields(), ...entry };
+    await appendFile(file, JSON.stringify(line) + "\n", "utf8");
   } catch (err) {
     if (!warned) {
       warned = true;

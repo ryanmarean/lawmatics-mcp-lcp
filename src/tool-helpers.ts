@@ -34,6 +34,8 @@ type RegisterOptions = {
   /** Return any JSON-serializable value; wrapping, auditing, and errors are handled here. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- each tool types its own args; zod validates at runtime
   handler: (args: any) => Promise<unknown>;
+  /** Transform args before they are written to the audit log (e.g. drop file contents). */
+  auditArgs?: (args: Record<string, unknown>) => Record<string, unknown>;
 };
 
 /**
@@ -43,9 +45,10 @@ type RegisterOptions = {
 export function registerTool(server: McpServer, opts: RegisterOptions): void {
   if (opts.write && isReadOnly()) return;
 
-  server.tool(opts.name, opts.description, opts.schema, (async (args: Record<string, unknown>) => {
+  server.tool(opts.name, opts.description, opts.schema, (async (rawArgs: Record<string, unknown>) => {
+    const args = opts.auditArgs ? opts.auditArgs(rawArgs) : rawArgs;
     try {
-      const data = await opts.handler(args);
+      const data = await opts.handler(rawArgs);
       const count = Array.isArray((data as { items?: unknown[] })?.items)
         ? (data as { items: unknown[] }).items.length
         : undefined;
